@@ -1,6 +1,0 @@
-conda install matplotlib
-conda install numpy
-
-pip install spikeinterface[full]
-pip install kilosort --upgrade
-pip install medicine-neuro

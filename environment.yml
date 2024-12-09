@@ -1,0 +1,17 @@
+name: pixelpipe
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - numpy
+  - matplotlib
+  - pandas
+  - scikit-learn
+  - jupyter
+  - pip
+  - ruamel.yaml
+  - numba
+  - pytorch
+
