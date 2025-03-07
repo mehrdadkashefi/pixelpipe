@@ -284,13 +284,14 @@ if __name__ == "__main__":
                         peak_amplitudes=peaks['amplitude'],
                         peak_depths=peak_locations['y'],
                         peak_times=peaks['sample_index'] / rec.get_sampling_frequency(),
+                        time_bin_size =2,
                         output_dir=medicine_output_dir) 
 
                     motion = np.load(medicine_output_dir / 'motion.npy')
                     time_bins = np.load(medicine_output_dir / 'time_bins.npy')
                     depth_bins = np.load(medicine_output_dir / 'depth_bins.npy')  
                     # Plotting the motion
-                    plt.figure(figsize=(2,5))
+                    plt.figure(figsize=(3,5))
                     plt.plot(time_bins, motion + depth_bins, color='k')
                     plt.ylabel('depth (um)')
                     plt.xlabel('time (sec)')
@@ -314,7 +315,7 @@ if __name__ == "__main__":
                     np.save(decenter_output_dir / "displacement.npy", motion.displacement)
                     np.save(decenter_output_dir / "spatial_bins_um.npy", motion.spatial_bins_um)
                     # Plotting the motion
-                    plt.figure(figsize=(2,5))
+                    plt.figure(figsize=(3,5))
                     plt.plot(motion.temporal_bins_s[0], motion.displacement[0] + motion.spatial_bins_um, 'k')
                     plt.ylabel('depth (um)')
                     plt.xlabel('time (sec)')
@@ -323,6 +324,44 @@ if __name__ == "__main__":
                     plt.close()
                 else:
                     print('Found Decenter folder already, skipping!')
+
+            if 'lfp' in args.motion:
+                from spikeinterface.sortingcomponents.motion.motion_estimation import estimate_motion
+                print('Estimating motion using lfp method')
+                lfp_output_dir = Path(motion_folder / 'lfp')
+                if not lfp_output_dir.exists():
+                    lfp_output_dir.mkdir(parents=True, exist_ok=True)
+                    # Preprocess lfp
+                    lfprec = si.bandpass_filter(
+                        raw_rec,
+                        freq_min=0.5,
+                        freq_max=250,
+                        margin_ms=1500.,
+                        filter_order=3,
+                        dtype="float32",
+                        add_reflect_padding=True)
+                    lfprec = si.phase_shift(lfprec)
+                    lfprec = si.resample(lfprec, resample_rate=250, margin_ms=1000)
+                    lfprec = si.directional_derivative(lfprec, order=2, edge_order=1)
+                    lfprec = si.average_across_direction(lfprec)
+                    si.plot_traces(lfprec, backend="matplotlib", mode="map", time_range=(400, 420)) #clim=(-0.05, 0.05)
+                    plt.savefig(lfp_output_dir / 'lfp.png')
+                    plt.close()
+                    
+                    motion = estimate_motion(lfprec, method='dredge_lfp', rigid=True, chunk_len_s=2, progress_bar=True)
+                    np.save(lfp_output_dir / "temporal_bins_s.npy", motion.temporal_bins_s)
+                    np.save(lfp_output_dir / "displacement.npy", motion.displacement)
+                    np.save(lfp_output_dir / "spatial_bins_um.npy", motion.spatial_bins_um)
+                    # Plotting the motion
+                    plt.figure(figsize=(3,5))
+                    plt.plot(motion.temporal_bins_s[0], motion.displacement[0] + motion.spatial_bins_um, 'k')
+                    plt.ylabel('depth (um)')
+                    plt.xlabel('time (sec)')
+                    sns.despine(trim=True)
+                    plt.savefig(lfp_output_dir / 'motion.png')
+                    plt.close()
+                else:
+                    print('Found lfp folder already, skipping!')
 
         if args.sort:
             from spikeinterface.sorters import run_sorter
@@ -408,3 +447,33 @@ if __name__ == "__main__":
                         run_sorter(sorter_name='kilosort4', recording=recording_motion_corrected, folder= probe_folder / 'kilosort4_pre_decenter',
                                     batch_size= 60000, verbose=True, do_correction= False)
                         plot_sorting_summary(Path(probe_folder / 'kilosort4_pre_decenter'))
+                ##############################################################################
+                # Sort KiloSort4 from preprocessed data and decentralization motion estimation
+                ##############################################################################
+                if (probe_folder / 'motion/lfp').exists():
+                    from spikeinterface.sortingcomponents.motion.motion_interpolation import InterpolateMotionRecording
+                    from spikeinterface.sortingcomponents.motion import motion_utils
+                    decenter_output_dir = Path(motion_folder / 'lfp')
+                    # Sort KiloSort4 after motion correction
+                    if (probe_folder / 'kilosort4_pre_lfp').exists():
+                        print('kilosort4_pre_lfp folder already exists, Anicha!')
+                    else:
+                        rec = si.read_binary_folder(probe_folder / 'preprocess')
+                        rec_float = si.astype(recording=rec, dtype="float32")
+                        # Load motion estimated by decentralization
+                        displacement = np.load(decenter_output_dir / 'displacement.npy')[0]
+                        temporal_bins_s = np.load(decenter_output_dir / 'temporal_bins_s.npy')[0]
+                        spatial_bins_um = np.load(decenter_output_dir / 'spatial_bins_um.npy')
+                        motion_object = motion_utils.Motion(
+                            displacement=displacement,
+                            temporal_bins_s=temporal_bins_s,
+                            spatial_bins_um=spatial_bins_um,
+                        )
+                        # Use interpolation to correct for motion estimated by decentralization
+                        recording_motion_corrected = InterpolateMotionRecording(
+                            rec_float,
+                            motion_object,
+                            border_mode='force_extrapolate')
+                        run_sorter(sorter_name='kilosort4', recording=recording_motion_corrected, folder= probe_folder / 'kilosort4_pre_lfp',
+                                    batch_size= 60000, verbose=True, do_correction= False)
+                        plot_sorting_summary(Path(probe_folder / 'kilosort4_pre_lfp'))
